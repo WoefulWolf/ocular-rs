@@ -2,8 +2,7 @@ use std::ffi::c_void;
 
 use windows::core::{
     HRESULT,
-    Interface,
-    Result
+    Interface
 };
 use windows::Win32::Foundation::BOOL;
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
@@ -98,43 +97,43 @@ fn get_ocular() -> &'static Ocular {
 }
 
 // SwapChain
-type PresentFn = fn(
+type PresentFn = extern "system" fn(
     this: IDXGISwapChain,
     sync_interval: u32,
     flags: u32,
 ) -> HRESULT;
 
-type ResizeBuffersFn = fn(
+type ResizeBuffersFn = extern "system" fn(
     this: IDXGISwapChain,
     buffer_count: u32,
     width: u32,
     height: u32,
     new_format: DXGI_FORMAT,
     swap_chain_flags: u32,
-) -> Result<()>;
+) -> HRESULT;
 
-type ResizeTargetFn = fn(
+type ResizeTargetFn = extern "system" fn(
     this: IDXGISwapChain,
     p_new_target_parameters: *const DXGI_MODE_DESC,
-) -> Result<()>;
+) -> HRESULT;
 
 // Device
-type CreateVertexShaderFn = fn(
+type CreateVertexShaderFn = extern "system" fn(
     this: ID3D11Device,
     p_shader_byte_code: *const c_void,
     p_class_linkage: Option<ID3D11ClassLinkage>,
     p_p_vertex_shader: *mut Option<ID3D11VertexShader>,
-) -> Result<()>;
+) -> HRESULT;
 
-type CreatePixelShaderFn = fn(
+type CreatePixelShaderFn = extern "system" fn(
     this: ID3D11Device,
     p_shader_byte_code: *const c_void,
     p_class_linkage: Option<ID3D11ClassLinkage>,
     p_p_pixel_shader: *mut Option<ID3D11PixelShader>,   
-) -> Result<()>;
+) -> HRESULT;
 
 // Device Context
-type OMSetRenderTargetsFn = fn(
+type OMSetRenderTargetsFn = extern "system" fn(
     This: ID3D11DeviceContext,
     num_views: u32,
     render_target_views: *const Option<ID3D11RenderTargetView>,
