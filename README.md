@@ -55,11 +55,12 @@ extern "system" fn DllMain(_dll_module: HMODULE, call_reason: u32, _reserved: *m
 ```
 
 ## Implemented Hooks
-| SwapChain     | Device                | DeviceContext     |
-| ---           | ---                   | ---               |
-| Present       | CreateVertexShader    | OMSetRenderTargets|
-| ResizeBuffers | CreatePixelShader     |                   |
-| ResizeTarget  |                       |                   |
+| SwapChain     | Device                   | DeviceContext     |
+| ---           | ---                      | ---               |
+| Present       | CreateVertexShader       | OMSetRenderTargets|
+| ResizeBuffers | CreatePixelShader        | UpdateSubresource |
+| ResizeTarget  | CreateTexture2D          | CopyResource      |
+|               | CreateShaderResourceView |                   |
 
 ## Please Note
 * This is not done, not even close to all the DX11 methods have been implemented, I'm adding them as I need them for projects. You are welcome to request/add others and make a pull request.
