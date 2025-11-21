@@ -7,7 +7,7 @@ use windows::core::{Interface, BOOL, HRESULT};
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, D3D11CreateDeviceAndSwapChain, ID3D11ClassLinkage, ID3D11DepthStencilView,
+    D3D11CreateDevice, ID3D11ClassLinkage, ID3D11DepthStencilView,
     ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11Resource,
     ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader, D3D11_BOX,
     D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, D3D11_SHADER_RESOURCE_VIEW_DESC,
@@ -125,11 +125,8 @@ fn get_ocular() -> &'static Ocular {
 }
 
 // SwapChain
-type PresentFn = extern "system" fn(
-    this: *mut IDXGISwapChain,
-    sync_interval: u32,
-    flags: u32,
-) -> HRESULT;
+type PresentFn =
+    extern "system" fn(this: *mut IDXGISwapChain, sync_interval: u32, flags: u32) -> HRESULT;
 
 type ResizeBuffersFn = extern "system" fn(
     this: *mut IDXGISwapChain,
@@ -150,8 +147,11 @@ type CreateVertexShaderFn = extern "system" fn(
     this: *mut ID3D11Device,
     p_shader_byte_code: *const c_void,
     p_class_linkage: Option<ID3D11ClassLinkage>,
-    p_p_vertex_s
-   hader: *mut Option<I HRESULT;e CreatePix    this: *mut ID3D11Device,
+    p_p_vertex_shader: *mut Option<ID3D11VertexShader>,
+) -> HRESULT;
+
+type CreatePixelShaderFn = extern "system" fn(
+    this: *mut ID3D11Device,
     p_shader_byte_code: *const c_void,
     p_class_linkage: Option<ID3D11ClassLinkage>,
     p_p_pixel_shader: *mut Option<ID3D11PixelShader>,
@@ -161,7 +161,7 @@ type CreateTexture2DFn = extern "system" fn(
     this: *mut ID3D11Device,
     p_desc: *const D3D11_TEXTURE2D_DESC,
     p_initial_data: *const D3D11_SUBRESOURCE_DATA,
-    pp_texture_2d: *mut *mut ID3D11Texture2D
+    pp_texture_2d: *mut *mut ID3D11Texture2D,
 ) -> HRESULT;
 
 type CreateShaderResourceViewFn = extern "system" fn(
@@ -186,13 +186,13 @@ type UpdateSubresourceFn = extern "system" fn(
     p_dst_box: *const D3D11_BOX,
     p_src_data: *const c_void,
     src_row_pitch: u32,
-    src_depth_pitch: u32,,
+    src_depth_pitch: u32,
 );
 
 type CopyResourceFn = extern "system" fn(
     this: *mut ID3D11DeviceContext,
     p_dst_resource: *mut ID3D11Resource,
-    p_src_resource: *mut ID3D11Resource
+    p_src_resource: *mut ID3D11Resource,
 );
 
 use hook_macro::Hookable;
@@ -202,7 +202,7 @@ use hook_macro::Hookable;
 enum SwapChain {
     Present,
     ResizeBuffers,
-    ResizeTarget
+    ResizeTarget,
 }
 
 #[allow(dead_code)]
@@ -211,14 +211,13 @@ enum Device {
     CreateVertexShader,
     CreatePixelShader,
     CreateTexture2D,
-    CreateShaderResourceView
+    CreateShaderResourceView,
 }
 
 #[allow(dead_code)]
 #[derive(Hookable)]
 enum DeviceContext {
-    OMSetRenderTargets,,
+    OMSetRenderTargets,
     UpdateSubresource,
-    CopyResource
+    CopyResource,
 }
-,,,
