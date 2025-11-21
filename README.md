@@ -23,7 +23,7 @@ use windows::Win32::Graphics::Dxgi::IDXGISwapChain;
 use ocular;
 
 // Our function we are going to hook with.
-fn hk_present(this: IDXGISwapChain, sync_interval: u32, flags: u32) -> HRESULT {
+fn hk_present(this: *mut IDXGISwapChain, sync_interval: u32, flags: u32) -> HRESULT {
     println!("Present called!");
 
     // Call and return the result of the original method.
