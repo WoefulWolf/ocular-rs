@@ -1,14 +1,13 @@
-#![allow(static_mut_refs)]
-
 use std::ffi::c_void;
+use std::sync::LazyLock;
 
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 use windows::core::{Interface, BOOL, HRESULT};
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11ClassLinkage, ID3D11DepthStencilView,
-    ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11Resource,
+    D3D11CreateDevice, ID3D11ClassLinkage, ID3D11DepthStencilView, ID3D11Device,
+    ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11Resource,
     ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader, D3D11_BOX,
     D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, D3D11_SHADER_RESOURCE_VIEW_DESC,
     D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC,
@@ -53,7 +52,7 @@ impl Ocular {
         let mut p_device: Option<ID3D11Device> = None;
         let mut p_device_context: Option<ID3D11DeviceContext> = None;
 
-        debug!("Calling D3D11CreateDevice");
+        trace!("Calling D3D11CreateDevice...");
         let res = unsafe {
             D3D11CreateDevice(
                 None,
@@ -76,7 +75,7 @@ impl Ocular {
             }
         }
 
-        debug!("Calling CreateDXGIFactory...");
+        trace!("Calling CreateDXGIFactory...");
         let dxgi: IDXGIFactory = match unsafe { CreateDXGIFactory() } {
             Ok(dxgi) => dxgi,
             Err(e) => {
@@ -85,7 +84,7 @@ impl Ocular {
             }
         };
 
-        debug!("Calling IDXGIFactory::CreateSwapChain...");
+        trace!("Calling IDXGIFactory::CreateSwapChain...");
         let res = unsafe {
             dxgi.CreateSwapChain(
                 p_device.as_ref().expect("pDevice was None"),
@@ -111,17 +110,15 @@ impl Ocular {
     }
 }
 
-static mut OCULAR: Option<Ocular> = None;
-fn get_ocular() -> &'static Ocular {
-    unsafe {
-        if OCULAR.is_none() {
-            debug!("Ocular not initialized, creating...");
-            OCULAR = Some(Ocular::new());
-            debug!("Ocular initialized!");
-        }
+static OCULAR: LazyLock<Ocular> = LazyLock::new(|| {
+    debug!("Ocular not initialized, creating...");
+    let ocular = Ocular::new();
+    debug!("Ocular initialized!");
+    ocular
+});
 
-        OCULAR.as_ref().unwrap()
-    }
+pub fn get_ocular() -> &'static Ocular {
+    &OCULAR
 }
 
 // SwapChain
