@@ -312,6 +312,13 @@ type CopyResourceFn = extern "system" fn(
     p_src_resource: *mut ID3D11Resource,
 );
 
+type PSSetShaderResourcesFn = extern "system" fn(
+    this: *mut ID3D11DeviceContext,
+    start_slot: u32,
+    num_views: u32,
+    pp_shader_resource_views: *const *mut ID3D11ShaderResourceView,
+);
+
 use hook_macro::Hookable;
 
 #[allow(dead_code)]
@@ -337,4 +344,5 @@ enum DeviceContext {
     OMSetRenderTargets,
     UpdateSubresource,
     CopyResource,
+    PSSetShaderResources,
 }
