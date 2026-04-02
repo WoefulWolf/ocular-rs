@@ -1,10 +1,14 @@
 use std::ffi::c_void;
 use std::sync::LazyLock;
 
-use tracing::{debug, error, trace};
-use windows::core::{Interface, BOOL, HRESULT};
-use windows::Win32::Foundation::HMODULE;
-use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use tracing::{debug, error, trace, warn};
+use windows::core::{w, Interface, BOOL, HRESULT};
+use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Direct3D::{
+    D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_REFERENCE, D3D_DRIVER_TYPE_WARP,
+    D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0,
+    D3D_FEATURE_LEVEL_11_1,
+};
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11ClassLinkage, ID3D11DepthStencilView, ID3D11Device,
     ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11Resource,
@@ -14,11 +18,14 @@ use windows::Win32::Graphics::Direct3D11::{
 };
 use windows::Win32::Graphics::Dxgi::{
     Common::{DXGI_FORMAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_SAMPLE_DESC},
-    IDXGISwapChain, DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD,
-    DXGI_USAGE_RENDER_TARGET_OUTPUT,
+    CreateDXGIFactory1, IDXGIFactory1, IDXGISwapChain, DXGI_SWAP_CHAIN_DESC,
+    DXGI_SWAP_EFFECT_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
-use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory, IDXGIFactory};
-use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DestroyWindow, RegisterClassExW, UnregisterClassW, WINDOW_EX_STYLE,
+    WNDCLASSEXW, WS_OVERLAPPED,
+};
 
 use retour::GenericDetour;
 
@@ -30,82 +37,195 @@ pub struct Ocular {
 
 impl Ocular {
     fn new() -> Ocular {
-        let sd: *const DXGI_SWAP_CHAIN_DESC = &DXGI_SWAP_CHAIN_DESC {
+        // Create our own dummy window to avoid issues with GetForegroundWindow
+        // which can return windows from other processes or protected system windows
+        let hwnd = Self::create_dummy_window();
+
+        let sd = DXGI_SWAP_CHAIN_DESC {
             BufferCount: 1,
             BufferDesc: DXGI_MODE_DESC {
                 Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                Width: 1,
+                Height: 1,
                 ..Default::default()
             },
             BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-            OutputWindow: unsafe { GetForegroundWindow() },
+            OutputWindow: hwnd,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
                 Quality: 0,
-                ..Default::default()
             },
             Windowed: BOOL(1),
             SwapEffect: DXGI_SWAP_EFFECT_DISCARD,
             ..Default::default()
         };
 
-        let mut p_swap_chain: Option<IDXGISwapChain> = None;
+        // Try multiple driver types for maximum compatibility
+        let driver_types = [
+            D3D_DRIVER_TYPE_HARDWARE,
+            D3D_DRIVER_TYPE_WARP,
+            D3D_DRIVER_TYPE_REFERENCE,
+        ];
+
+        // Feature levels to try, in descending order
+        let feature_levels = [
+            D3D_FEATURE_LEVEL_11_1,
+            D3D_FEATURE_LEVEL_11_0,
+            D3D_FEATURE_LEVEL_10_1,
+            D3D_FEATURE_LEVEL_10_0,
+        ];
+
         let mut p_device: Option<ID3D11Device> = None;
         let mut p_device_context: Option<ID3D11DeviceContext> = None;
+        let mut last_error = None;
 
-        trace!("Calling D3D11CreateDevice...");
-        let res = unsafe {
-            D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_HARDWARE,
-                HMODULE(0 as *mut c_void),
-                D3D11_CREATE_DEVICE_FLAG(0),
-                None,
-                D3D11_SDK_VERSION,
-                Some(&mut p_device),
-                Some(std::ptr::null_mut()),
-                Some(&mut p_device_context),
-            )
-        };
+        // Try each driver type until one succeeds
+        for driver_type in driver_types {
+            trace!("Trying D3D11CreateDevice with {:?}...", driver_type);
 
-        match res {
-            Ok(_) => {}
-            Err(e) => {
-                error!("D3D11CreateDevice failed: {:?}", e);
-                panic!("D3D11CreateDevice failed: {:?}", e);
+            let res = unsafe {
+                D3D11CreateDevice(
+                    None,
+                    driver_type,
+                    HMODULE(std::ptr::null_mut()),
+                    D3D11_CREATE_DEVICE_FLAG(0),
+                    Some(&feature_levels),
+                    D3D11_SDK_VERSION,
+                    Some(&mut p_device),
+                    None,
+                    Some(&mut p_device_context),
+                )
+            };
+
+            match res {
+                Ok(_) if p_device.is_some() => {
+                    trace!("D3D11CreateDevice succeeded with {:?}", driver_type);
+                    break;
+                }
+                Err(e) => {
+                    warn!("D3D11CreateDevice failed with {:?}: {:?}", driver_type, e);
+                    last_error = Some(e);
+                    p_device = None;
+                    p_device_context = None;
+                }
+                _ => {}
             }
         }
 
-        trace!("Calling CreateDXGIFactory...");
-        let dxgi: IDXGIFactory = match unsafe { CreateDXGIFactory() } {
+        let p_device = match p_device {
+            Some(device) => device,
+            None => {
+                Self::cleanup_dummy_window(hwnd);
+                error!(
+                    "All D3D11CreateDevice attempts failed: {:?}",
+                    last_error
+                );
+                panic!(
+                    "All D3D11CreateDevice attempts failed: {:?}",
+                    last_error
+                );
+            }
+        };
+
+        trace!("Calling CreateDXGIFactory1...");
+        let dxgi: IDXGIFactory1 = match unsafe { CreateDXGIFactory1() } {
             Ok(dxgi) => dxgi,
             Err(e) => {
-                error!("CreateDXGIFactory failed: {:?}", e);
-                panic!("CreateDXGIFactory failed: {:?}", e);
+                Self::cleanup_dummy_window(hwnd);
+                error!("CreateDXGIFactory1 failed: {:?}", e);
+                panic!("CreateDXGIFactory1 failed: {:?}", e);
             }
         };
+
+        let mut p_swap_chain: Option<IDXGISwapChain> = None;
 
         trace!("Calling IDXGIFactory::CreateSwapChain...");
-        let res = unsafe {
-            dxgi.CreateSwapChain(
-                p_device.as_ref().expect("pDevice was None"),
-                sd,
-                &mut p_swap_chain,
-            )
-            .ok()
-        };
-
-        match res {
-            Ok(_) => {}
-            Err(e) => {
-                error!("IDXGIFactory::CreateSwapChain failed: {:?}", e);
-                panic!("IDXGIFactory::CreateSwapChain failed: {:?}", e);
-            }
+        let res = unsafe { dxgi.CreateSwapChain(&p_device, &sd, &mut p_swap_chain) };
+        if res.is_err() {
+            Self::cleanup_dummy_window(hwnd);
+            error!("IDXGIFactory::CreateSwapChain failed: {:?}", res);
+            panic!("IDXGIFactory::CreateSwapChain failed: {:?}", res);
         }
+
+        // Clean up the dummy window after swap chain is created
+        Self::cleanup_dummy_window(hwnd);
 
         Ocular {
             swap_chain: p_swap_chain.expect("No SwapChain found"),
-            device: p_device.expect("No Device found"),
+            device: p_device,
             device_context: p_device_context.expect("No DeviceContext found"),
+        }
+    }
+
+    /// Creates a hidden dummy window owned by our process for swap chain creation.
+    /// This avoids issues with GetForegroundWindow() which can return:
+    /// - Windows from other processes (access denied)
+    /// - Protected/system windows
+    /// - NULL if no window is focused
+    fn create_dummy_window() -> HWND {
+        const CLASS_NAME: windows::core::PCWSTR = w!("OcularDummyWindow");
+
+        // Minimal window procedure
+        unsafe extern "system" fn wnd_proc(
+            hwnd: HWND,
+            msg: u32,
+            wparam: WPARAM,
+            lparam: LPARAM,
+        ) -> LRESULT {
+            windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+
+        unsafe {
+            let hmodule = GetModuleHandleW(None).unwrap_or_default();
+            let hinstance: HINSTANCE = std::mem::transmute(hmodule);
+
+            let wc = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(wnd_proc),
+                hInstance: hinstance,
+                lpszClassName: CLASS_NAME,
+                ..Default::default()
+            };
+
+            // Register class (ignore error if already registered)
+            RegisterClassExW(&wc);
+
+            let hwnd = match CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                CLASS_NAME,
+                w!(""),
+                WS_OVERLAPPED,
+                0,
+                0,
+                1,
+                1,
+                None,
+                None,
+                Some(hinstance),
+                None,
+            ) {
+                Ok(hwnd) => hwnd,
+                Err(e) => {
+                    error!("Failed to create dummy window: {:?}", e);
+                    panic!("Failed to create dummy window: {:?}", e);
+                }
+            };
+
+            trace!("Created dummy window: {:?}", hwnd);
+            hwnd
+        }
+    }
+
+    /// Cleans up the dummy window after use
+    fn cleanup_dummy_window(hwnd: HWND) {
+        const CLASS_NAME: windows::core::PCWSTR = w!("OcularDummyWindow");
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let hmodule = GetModuleHandleW(None).unwrap_or_default();
+            let hinstance: HINSTANCE = std::mem::transmute(hmodule);
+            let _ = UnregisterClassW(CLASS_NAME, Some(hinstance));
+            trace!("Cleaned up dummy window");
         }
     }
 }
