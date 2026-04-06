@@ -1,33 +1,58 @@
-use std::ffi::c_void;
-use std::sync::LazyLock;
-
+#![allow(clippy::missing_transmute_annotations)]
+use std::{ffi::c_void, fmt, sync::LazyLock};
 use tracing::{debug, error, trace, warn};
-use windows::core::{w, Interface, BOOL, HRESULT};
-use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::Graphics::Direct3D::{
-    D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_REFERENCE, D3D_DRIVER_TYPE_WARP,
-    D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0,
-    D3D_FEATURE_LEVEL_11_1,
-};
-use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11ClassLinkage, ID3D11DepthStencilView, ID3D11Device,
-    ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11Resource,
-    ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader, D3D11_BOX,
-    D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, D3D11_SHADER_RESOURCE_VIEW_DESC,
-    D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC,
-};
-use windows::Win32::Graphics::Dxgi::{
-    Common::{DXGI_FORMAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_SAMPLE_DESC},
-    CreateDXGIFactory1, IDXGIFactory1, IDXGISwapChain, DXGI_SWAP_CHAIN_DESC,
-    DXGI_SWAP_EFFECT_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT,
-};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, RegisterClassExW, UnregisterClassW, WINDOW_EX_STYLE,
-    WNDCLASSEXW, WS_OVERLAPPED,
+use windows::{
+    Win32::{
+        Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, WPARAM},
+        Graphics::{
+            Direct3D::{
+                D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_REFERENCE, D3D_DRIVER_TYPE_WARP,
+                D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0,
+                D3D_FEATURE_LEVEL_11_1,
+            },
+            Direct3D11::{
+                D3D11_BOX, D3D11_BUFFER_DESC, D3D11_CREATE_DEVICE_FLAG,
+                D3D11_RENDER_TARGET_VIEW_DESC, D3D11_SDK_VERSION, D3D11_SHADER_RESOURCE_VIEW_DESC,
+                D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC, D3D11_VIEWPORT, D3D11CreateDevice,
+                ID3D11Buffer, ID3D11ClassInstance, ID3D11ClassLinkage, ID3D11DepthStencilView,
+                ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView,
+                ID3D11Resource, ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
+            },
+            Dxgi::{
+                Common::{
+                    DXGI_FORMAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_SAMPLE_DESC,
+                },
+                CreateDXGIFactory1, DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD,
+                DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory1, IDXGISwapChain,
+            },
+        },
+        System::LibraryLoader::GetModuleHandleW,
+        UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, RegisterClassExW, UnregisterClassW, WINDOW_EX_STYLE,
+            WNDCLASSEXW, WS_OVERLAPPED,
+        },
+    },
+    core::{BOOL, HRESULT, Interface, w},
 };
 
-use retour::GenericDetour;
+#[derive(Debug)]
+pub enum HookError {
+    AlreadyHooked,
+    CreateFailed(String),
+    EnableFailed(String),
+}
+
+impl fmt::Display for HookError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HookError::AlreadyHooked => write!(f, "hook already installed"),
+            HookError::CreateFailed(e) => write!(f, "failed to create hook: {}", e),
+            HookError::EnableFailed(e) => write!(f, "failed to enable hook: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for HookError {}
 
 pub struct Ocular {
     swap_chain: IDXGISwapChain,
@@ -116,14 +141,8 @@ impl Ocular {
             Some(device) => device,
             None => {
                 Self::cleanup_dummy_window(hwnd);
-                error!(
-                    "All D3D11CreateDevice attempts failed: {:?}",
-                    last_error
-                );
-                panic!(
-                    "All D3D11CreateDevice attempts failed: {:?}",
-                    last_error
-                );
+                error!("All D3D11CreateDevice attempts failed: {:?}", last_error);
+                panic!("All D3D11CreateDevice attempts failed: {:?}", last_error);
             }
         };
 
@@ -166,13 +185,15 @@ impl Ocular {
         const CLASS_NAME: windows::core::PCWSTR = w!("OcularDummyWindow");
 
         // Minimal window procedure
-        unsafe extern "system" fn wnd_proc(
+        extern "system" fn wnd_proc(
             hwnd: HWND,
             msg: u32,
             wparam: WPARAM,
             lparam: LPARAM,
         ) -> LRESULT {
-            windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
         }
 
         unsafe {
@@ -219,7 +240,6 @@ impl Ocular {
     /// Cleans up the dummy window after use
     fn cleanup_dummy_window(hwnd: HWND) {
         const CLASS_NAME: windows::core::PCWSTR = w!("OcularDummyWindow");
-
         unsafe {
             let _ = DestroyWindow(hwnd);
             let hmodule = GetModuleHandleW(None).unwrap_or_default();
@@ -263,15 +283,17 @@ type ResizeTargetFn = extern "system" fn(
 type CreateVertexShaderFn = extern "system" fn(
     this: *mut ID3D11Device,
     p_shader_byte_code: *const c_void,
-    p_class_linkage: Option<ID3D11ClassLinkage>,
-    p_p_vertex_shader: *mut Option<ID3D11VertexShader>,
+    byte_code_length: usize,
+    p_class_linkage: *const ID3D11ClassLinkage,
+    p_p_vertex_shader: *mut *mut ID3D11VertexShader,
 ) -> HRESULT;
 
 type CreatePixelShaderFn = extern "system" fn(
     this: *mut ID3D11Device,
     p_shader_byte_code: *const c_void,
-    p_class_linkage: Option<ID3D11ClassLinkage>,
-    p_p_pixel_shader: *mut Option<ID3D11PixelShader>,
+    byte_code_length: usize,
+    p_class_linkage: *const ID3D11ClassLinkage,
+    p_p_pixel_shader: *mut *mut ID3D11PixelShader,
 ) -> HRESULT;
 
 type CreateTexture2DFn = extern "system" fn(
@@ -283,17 +305,31 @@ type CreateTexture2DFn = extern "system" fn(
 
 type CreateShaderResourceViewFn = extern "system" fn(
     this: *mut ID3D11Device,
-    p_resource: *mut ID3D11Resource,
+    p_resource: *const ID3D11Resource,
     p_desc: *const D3D11_SHADER_RESOURCE_VIEW_DESC,
     pp_srv: *mut *mut ID3D11ShaderResourceView,
+) -> HRESULT;
+
+type CreateBufferFn = extern "system" fn(
+    this: *mut ID3D11Device,
+    p_desc: *const D3D11_BUFFER_DESC,
+    p_initial_data: *const D3D11_SUBRESOURCE_DATA,
+    pp_buffer: *mut *mut ID3D11Buffer,
+) -> HRESULT;
+
+type CreateRenderTargetViewFn = extern "system" fn(
+    this: *mut ID3D11Device,
+    p_resource: *const ID3D11Resource,
+    p_desc: *const D3D11_RENDER_TARGET_VIEW_DESC,
+    pp_rtview: *mut *mut ID3D11RenderTargetView,
 ) -> HRESULT;
 
 // Device Context
 type OMSetRenderTargetsFn = extern "system" fn(
     this: *mut ID3D11DeviceContext,
     num_views: u32,
-    render_target_views: *const Option<ID3D11RenderTargetView>,
-    depth_stencil_view: Option<ID3D11DepthStencilView>,
+    render_target_views: *const *const ID3D11RenderTargetView,
+    depth_stencil_view: *const ID3D11DepthStencilView,
 );
 
 type UpdateSubresourceFn = extern "system" fn(
@@ -309,17 +345,50 @@ type UpdateSubresourceFn = extern "system" fn(
 type CopyResourceFn = extern "system" fn(
     this: *mut ID3D11DeviceContext,
     p_dst_resource: *mut ID3D11Resource,
-    p_src_resource: *mut ID3D11Resource,
+    p_src_resource: *const ID3D11Resource,
 );
 
 type PSSetShaderResourcesFn = extern "system" fn(
     this: *mut ID3D11DeviceContext,
     start_slot: u32,
     num_views: u32,
-    pp_shader_resource_views: *const *mut ID3D11ShaderResourceView,
+    pp_shader_resource_views: *const *const ID3D11ShaderResourceView,
 );
 
-use hook_macro::Hookable;
+type RSSetViewportsFn = extern "system" fn(
+    this: *mut ID3D11DeviceContext,
+    num_viewports: u32,
+    p_viewports: *const D3D11_VIEWPORT,
+);
+
+type PSSetConstantBuffersFn = extern "system" fn(
+    this: *mut ID3D11DeviceContext,
+    start_slot: u32,
+    num_buffers: u32,
+    pp_shader_resource_views: *const *const ID3D11Buffer,
+);
+
+type PSSetShaderFn = extern "system" fn(
+    this: *mut ID3D11DeviceContext,
+    p_pixel_shader: *const ID3D11PixelShader,
+    pp_class_instances: *const *const ID3D11ClassInstance,
+    num_class_instances: u32,
+);
+
+type DrawFn = extern "system" fn(
+    this: *mut ID3D11DeviceContext,
+    vertex_count: u32,
+    start_vertex_location: u32,
+);
+
+type DrawIndexedFn = extern "system" fn(
+    this: *mut ID3D11DeviceContext,
+    index_count: u32,
+    start_index_location: u32,
+    base_vertex_location: i32,
+);
+
+use ocular_macros::Hookable;
 
 #[allow(dead_code)]
 #[derive(Hookable)]
@@ -336,6 +405,8 @@ enum Device {
     CreatePixelShader,
     CreateTexture2D,
     CreateShaderResourceView,
+    CreateBuffer,
+    CreateRenderTargetView,
 }
 
 #[allow(dead_code)]
@@ -345,4 +416,9 @@ enum DeviceContext {
     UpdateSubresource,
     CopyResource,
     PSSetShaderResources,
+    RSSetViewports,
+    PSSetConstantBuffers,
+    PSSetShader,
+    Draw,
+    DrawIndexed,
 }

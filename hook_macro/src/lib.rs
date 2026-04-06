@@ -23,34 +23,36 @@ pub fn derive_hookable(input: TokenStream) -> TokenStream {
                 let variant_name_str = format_ident!("{}", variant_name.to_string());
                 let variant_name_fn = format_ident!("{}Fn", variant_name.to_string());
 
-                let variant_name_msg = format!("Failed to hook {}", variant_name.to_string());
-                
                 let hook_variant_name = format_ident!("{}_HOOK", variant_name.to_string().to_case(Case::Snake).to_uppercase());
                 
                 let mut hook_variant_func_name = format_ident!("hook_{}", variant_name.to_string().to_case(Case::Snake));
                 hook_variant_func_name.set_span(variant_name.span());
 
-                let get_variant_func_name = format_ident!("get_{}", variant_name.to_string().to_case(Case::Snake));
+                let get_variant_func_name = format_ident!("{}", variant_name.to_string().to_case(Case::Snake));
 
                 variant_hook_functions.extend( quote_spanned! { variant.span() =>
-                    // Static to store detour
-                    static mut #hook_variant_name: Option<GenericDetour<#variant_name_fn>> = None;
+                    static #hook_variant_name: std::sync::OnceLock<retour::GenericDetour<#variant_name_fn>> = std::sync::OnceLock::new();
 
-                    // Create hook
-                    pub fn #hook_variant_func_name(detour: #variant_name_fn) {
+                    pub fn #hook_variant_func_name(detour: #variant_name_fn) -> Result<(), HookError> {
                         let ocular = get_ocular();
 
-                        unsafe {
-                            let hook = GenericDetour::<#variant_name_fn>::new(std::mem::transmute(ocular.#class.vtable().#variant_name_str), detour).expect(#variant_name_msg);
-                            let _ = hook.enable();
-                            
-                            #hook_variant_name = Some(hook);
-                        }
+                        let hook = unsafe {
+                            retour::GenericDetour::<#variant_name_fn>::new(
+                                std::mem::transmute(ocular.#class.vtable().#variant_name_str),
+                                detour
+                            )
+                        }.map_err(|e| HookError::CreateFailed(e.to_string()))?;
+
+                        unsafe { hook.enable() }
+                            .map_err(|e| HookError::EnableFailed(e.to_string()))?;
+
+                        #hook_variant_name
+                            .set(hook)
+                            .map_err(|_| HookError::AlreadyHooked)
                     }
 
-                    // Get original func
-                    pub fn #get_variant_func_name() -> Option<&'static GenericDetour<#variant_name_fn>> {
-                        unsafe { #hook_variant_name.as_ref() }
+                    pub fn #get_variant_func_name() -> Option<&'static retour::GenericDetour<#variant_name_fn>> {
+                        #hook_variant_name.get()
                     }
                 });
             }

@@ -13,11 +13,17 @@ Rust "port" of my <a href = "https://github.com/WoefulWolf/ocular">C++ library.<
 ```rust
 // Just some windows-rs stuff to declare our DLL entry point.
 use std::ffi::c_void;
-use windows::core::HRESULT;
-use windows::Win32::System::Console::AllocConsole;
-use windows::Win32::Foundation::{BOOL, HMODULE};
-use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
-use windows::Win32::Graphics::Dxgi::IDXGISwapChain;
+use windows::{
+    Win32::{
+        Foundation::{BOOL, HMODULE},
+        Graphics::Dxgi::IDXGISwapChain,
+        System::{
+            Console::AllocConsole,
+            SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH},
+        },
+    },
+    core::HRESULT,
+};
 
 // Import ocular-rs
 use ocular;
@@ -27,13 +33,14 @@ fn hk_present(this: *mut IDXGISwapChain, sync_interval: u32, flags: u32) -> HRES
     println!("Present called!");
 
     // Call and return the result of the original method.
-    ocular::get_present().expect("Uh oh. Present isn't hooked?!").call(this, sync_interval, flags)
+    ocular::present().expect("Uh oh. Present isn't hooked?!").call(this, sync_interval, flags)
 }
-
 
 fn main() {
     // Create our Present hook.
-    ocular::hook_present(hk_present);
+    if let Err(e) = ocular::hook_present(hk_present) {
+        eprintln!("Failed to hook present: {}", e);
+    }
 }
 
 // Boilerplate DLL entry.
@@ -55,12 +62,17 @@ extern "system" fn DllMain(_dll_module: HMODULE, call_reason: u32, _reserved: *m
 ```
 
 ## Implemented Hooks
-| SwapChain     | Device                   | DeviceContext     |
-| ---           | ---                      | ---               |
-| Present       | CreateVertexShader       | OMSetRenderTargets|
-| ResizeBuffers | CreatePixelShader        | UpdateSubresource |
-| ResizeTarget  | CreateTexture2D          | CopyResource      |
-|               | CreateShaderResourceView |                   |
+| SwapChain     | Device                   | DeviceContext        |
+| ---           | ---                      | ---                  |
+| Present       | CreateVertexShader       | OMSetRenderTargets   |
+| ResizeBuffers | CreatePixelShader        | UpdateSubresource    |
+| ResizeTarget  | CreateTexture2D          | CopyResource         |
+|               | CreateShaderResourceView | PSSetShaderResources |
+|               | CreateBuffer             | RSSetViewports       |
+|               | CreateRenderTargetView   | PSSetConstantBuffers |
+|               |                          | PSSetShader          |
+|               |                          | Draw                 |
+|               |                          | DrawIndexed          |
 
 ## Please Note
 * This is not done, not even close to all the DX11 methods have been implemented, I'm adding them as I need them for projects. You are welcome to request/add others and make a pull request.
