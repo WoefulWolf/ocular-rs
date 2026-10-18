@@ -348,6 +348,15 @@ type CopyResourceFn = extern "system" fn(
     p_src_resource: *const ID3D11Resource,
 );
 
+type ResolveSubresourceFn = extern "system" fn(
+    this: *mut ID3D11DeviceContext,
+    p_dst_resource: *mut ID3D11Resource,
+    dst_subresource: u32,
+    p_src_resource: *const ID3D11Resource,
+    src_subresource: u32,
+    format: DXGI_FORMAT,
+);
+
 type PSSetShaderResourcesFn = extern "system" fn(
     this: *mut ID3D11DeviceContext,
     start_slot: u32,
@@ -415,6 +424,7 @@ enum DeviceContext {
     OMSetRenderTargets,
     UpdateSubresource,
     CopyResource,
+    ResolveSubresource,
     PSSetShaderResources,
     RSSetViewports,
     PSSetConstantBuffers,
