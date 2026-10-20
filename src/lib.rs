@@ -296,6 +296,13 @@ type CreatePixelShaderFn = extern "system" fn(
     p_p_pixel_shader: *mut *mut ID3D11PixelShader,
 ) -> HRESULT;
 
+type CheckMultisampleQualityLevelsFn = extern "system" fn(
+    this: *mut ID3D11Device,
+    format: DXGI_FORMAT,
+    sample_count: u32,
+    p_num_quality_levels: *mut u32,
+) -> HRESULT;
+
 type CreateTexture2DFn = extern "system" fn(
     this: *mut ID3D11Device,
     p_desc: *const D3D11_TEXTURE2D_DESC,
@@ -416,6 +423,7 @@ enum Device {
     CreateShaderResourceView,
     CreateBuffer,
     CreateRenderTargetView,
+    CheckMultisampleQualityLevels,
 }
 
 #[allow(dead_code)]
